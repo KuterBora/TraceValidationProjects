@@ -38,7 +38,7 @@ S ==
       snapshotStore_ |-> snapshotStore,
       missed_ |-> missed ]
 
-NeedToTrace == 
+mustTrace == 
     DOMAIN [ tx_ |-> tx, snapshotStore_ |-> snapshotStore ]
 
 Init == \* The initial predicate.
@@ -212,7 +212,7 @@ TraceAuto(state) ==
     [ x \in fnDomain |-> state[x] ]
     
 TraceLearned(state) ==
-    [ x \in NeedToTrace |-> state[x] ]
+    [ x \in mustTrace |-> state[x] ]
     
 AutoRules ==
     S # S' => TraceAuto(S) # TraceAuto(S')
@@ -273,5 +273,5 @@ THEOREM Spec => []TraceRules
 THEOREM Spec => []UsefulTraceRules
 =============================================================================
 \* Modification History
-\* Last modified Sat Jun 22 21:51:01 PDT 2024 by user
+\* Last modified Sat Jun 22 22:28:34 PDT 2024 by user
 \* Created Mon Jun 03 17:44:12 PDT 2024 by user
