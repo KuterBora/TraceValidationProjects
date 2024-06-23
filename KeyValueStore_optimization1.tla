@@ -7,22 +7,39 @@
 (* specifications/SnapshotIsolation specs in the tlaplus/examples repo.   *)
 (**************************************************************************)
 
-CONSTANTS   Key,            \* The set of all keys.
-            Val,            \* The set of all values.
-            TxId            \* The set of all transaction IDs.
-VARIABLES   store,          \* A data store mapping keys to values.
-            tx,             \* The set of open snapshot transactions.
-            snapshotStore,  \* Snapshots of the store for each transaction.
-            written,        \* A log of writes performed within each transaction.
-            missed          \* The set of writes invisible to each transaction.
+EXTENDS FiniteSets, Integers
+
+CONSTANTS   
+     Key,
+     Val,
+     TxId
+     
+VARIABLES
+    store,
+    tx,
+    snapshotStore,
+    written,
+    missed,
+    fnDomain
 ----------------------------------------------------------------------------
-vars == <<store, tx, snapshotStore, written, missed>>
+vars == << store, tx, snapshotStore, written, missed >>
+traceVars == << tx, snapshotStore >>
 
 NoVal ==    \* Choose something to represent the absence of a value.
     CHOOSE v : v \notin Val
     
 Store ==    \* The set of all key-value stores.
     [Key -> Val \cup {NoVal}]
+
+S == 
+    [ store_ |-> store, 
+      tx_ |-> tx,
+      written_ |-> written,
+      snapshotStore_ |-> snapshotStore,
+      missed_ |-> missed ]
+
+NeedToTrace == 
+    DOMAIN [ tx_ |-> tx, snapshotStore_ |-> snapshotStore ]
 
 Init == \* The initial predicate.
     /\ store = [k \in Key |-> NoVal]        \* All store values are initially NoVal.
@@ -31,6 +48,7 @@ Init == \* The initial predicate.
         [t \in TxId |-> [k \in Key |-> NoVal]]
     /\ written = [t \in TxId |-> {}]        \* All write logs are initially empty.
     /\ missed = [t \in TxId |-> {}]         \* All missed writes are initially empty.
+    /\ fnDomain \in SUBSET DOMAIN S
     
 TypeInvariant ==    \* The type invariant.
     /\ store \in Store
@@ -80,7 +98,8 @@ RollbackTx(t) ==    \* Close the transaction without merging writes into store.
     /\ snapshotStore' = [snapshotStore EXCEPT ![t] = [k \in Key |-> NoVal]]
     /\ written' = [written EXCEPT ![t] = {}]
     /\ missed' = [missed EXCEPT ![t] = {}]
-    /\ UNCHANGED store
+    /\ UNCHANGED << store >>
+
 
 CloseTx(t) ==   \* Close transaction t, merging writes into store.
     /\ t \in tx
@@ -94,31 +113,24 @@ CloseTx(t) ==   \* Close transaction t, merging writes into store.
     /\ written' = [written EXCEPT ![t] = {}]
 
 Next == \* The next-state relation.
-    \/ \E t \in TxId : OpenTx(t)
-    \/ \E t \in tx : \E k \in Key : \E v \in Val : Add(t, k, v)
-    \/ \E t \in tx : \E k \in Key : \E v \in Val : Update(t, k, v)
-    \/ \E t \in tx : \E k \in Key : Remove(t, k)
-    \/ \E t \in tx : RollbackTx(t)
-    \/ \E t \in tx : CloseTx(t)
+    /\ UNCHANGED << fnDomain >>
+    /\  \/ \E t \in TxId : OpenTx(t)
+        \/ \E t \in tx : \E k \in Key : \E v \in Val : Add(t, k, v)
+        \/ \E t \in tx : \E k \in Key : \E v \in Val : Update(t, k, v)
+        \/ \E t \in tx : \E k \in Key : Remove(t, k)
+        \/ \E t \in tx : RollbackTx(t)
+        \/ \E t \in tx : CloseTx(t)
         
 Spec == \* Initialize state with Init and transition with Next.
-    Init /\ [][Next]_<<store, tx, snapshotStore, written, missed>>
-    
-TraceVars(vrs) ==
-    [
-     trace_store |-> vrs[1],
-     trace_tx |-> vrs[2],
-     trace_snapshotStore |-> vrs[3],
-     trace_written |-> vrs[4],
-     trace_missed |-> vrs[5]
-    ]
+    Init /\ [][Next]_<<store, tx, snapshotStore, written, missed, fnDomain>>
+
 ----------------------------------------------------------------------------
 \*  modified actions
 
 OpenTxState(state, t) ==
-    IF   t \notin state.tx
-    THEN LET s == [state EXCEPT !.tx = state.tx \cup {t} ]
-             s2 == [s EXCEPT !.snapshotStore = [s.snapshotStore EXCEPT ![t] = s.store] ]
+    IF   t \notin state.tx_
+    THEN LET s == [state EXCEPT !.tx_ = state.tx_ \cup {t} ]
+             s2 == [s EXCEPT !.snapshotStore_ = [s.snapshotStore_ EXCEPT ![t] = s.store_] ]
          IN  { s2 }
     ELSE {}
     
@@ -127,9 +139,9 @@ OpenTxStates(state) ==
     
     
 AddState(state, t, k, v) ==
-    IF t \in tx /\ snapshotStore[t][k] = NoVal
-    THEN LET s == [ state EXCEPT !.snapshotStore = [state.snapshotStore EXCEPT ![t][k] = v] ] 
-             s2 ==  [ s EXCEPT !.written = [state.written EXCEPT ![t] = @ \cup {k}] ]
+    IF t \in state.tx_ /\ state.snapshotStore_[t][k] = NoVal
+    THEN LET s == [ state EXCEPT !.snapshotStore_ = [state.snapshotStore_ EXCEPT ![t][k] = v] ] 
+             s2 ==  [ s EXCEPT !.written_ = [state.written_ EXCEPT ![t] = @ \cup {k}] ]
              IN { s2 }
     ELSE {}
 
@@ -138,9 +150,9 @@ AddStates(state) ==
 
 
 UpdateState(state, t, k, v) ==
-    IF t \in tx /\ snapshotStore[t][k] \notin {NoVal, v}
-    THEN LET s == [ state EXCEPT !.snapshotStore = [state.snapshotStore EXCEPT ![t][k] = v] ]
-             s2 == [s EXCEPT !.written = [state.written EXCEPT ![t] = @ \cup {k}] ]
+    IF t \in state.tx_ /\ state.snapshotStore_[t][k] \notin {NoVal, v}
+    THEN LET s == [ state EXCEPT !.snapshotStore_ = [state.snapshotStore_ EXCEPT ![t][k] = v] ]
+             s2 == [s EXCEPT !.written_ = [state.written_ EXCEPT ![t] = @ \cup {k}] ]
          IN { s2 }
     ELSE {}
 
@@ -149,9 +161,9 @@ UpdateStates(state) ==
     
 
 RemoveState(state, t, k) ==
-    IF t \in tx /\ snapshotStore[t][k] /= NoVal    
-    THEN LET s == [state EXCEPT !.snapshotStore = [state.snapshotStore EXCEPT ![t][k] = NoVal]]
-             s2 == [s EXCEPT !.written = [state.written EXCEPT ![t] = @ \cup {k}]]
+    IF t \in state.tx_ /\ state.snapshotStore_[t][k] /= NoVal    
+    THEN LET s == [state EXCEPT !.snapshotStore_ = [state.snapshotStore_ EXCEPT ![t][k] = NoVal]]
+             s2 == [s EXCEPT !.written_ = [state.written_ EXCEPT ![t] = @ \cup {k}]]
              IN { s2 }
     ELSE {}
 
@@ -160,11 +172,11 @@ RemoveStates(state) ==
 
 
 RollbackState(state, t) ==
-    IF t \in tx
-    THEN LET s == [ state EXCEPT !.tx = state.tx \ {t} ]
-             s2 == [ s EXCEPT !.snapshotStore = [state.snapshotStore EXCEPT ![t] = [k \in Key |-> NoVal]] ]
-             s3 == [ s2 EXCEPT !.written = [state.written EXCEPT ![t] = {}] ]
-             s4 == [ s3 EXCEPT !.missed = [state.missed EXCEPT ![t] = {}] ]
+    IF t \in state.tx_
+    THEN LET s == [ state EXCEPT !.tx_ = state.tx_ \ {t} ]
+             s2 == [ s EXCEPT !.snapshotStore_ = [state.snapshotStore_ EXCEPT ![t] = [k \in Key |-> NoVal]] ]
+             s3 == [ s2 EXCEPT !.written_ = [state.written_ EXCEPT ![t] = {}] ]
+             s4 == [ s3 EXCEPT !.missed_ = [state.missed_ EXCEPT ![t] = {}] ]
          IN { s4 }
     ELSE {}
 
@@ -173,12 +185,12 @@ RollbackStates(state) ==
 
 
 CloseTxState(state, t) ==
-    IF t \in tx /\  missed[t] \cap written[t] = {}
-    THEN LET s == [ state EXCEPT !.store = [k \in Key |-> IF k \in state.written[t] THEN state.snapshotStore[t][k] ELSE state.store[k]] ]
-             s2 == [ s EXCEPT !.tx = state.tx \ {t} ]
-             s3 == [ s2 EXCEPT !.missed = [otherTx \in TxId |-> IF otherTx \in s2.tx THEN state.missed[otherTx] \cup state.written[t] ELSE {}]]
-             s4 == [ s3 EXCEPT !.snapshotStore = [state.snapshotStore EXCEPT ![t] = [k \in Key |-> NoVal]] ]
-             s5 == [ s4 EXCEPT !.written = [state.written EXCEPT ![t] = {}] ]
+    IF t \in state.tx_ /\  state.missed_[t] \cap state.written_[t] = {}
+    THEN LET s == [ state EXCEPT !.store_ = [k \in Key |-> IF k \in state.written_[t] THEN state.snapshotStore_[t][k] ELSE state.store_[k]] ]
+             s2 == [ s EXCEPT !.tx_ = state.tx_ \ {t} ]
+             s3 == [ s2 EXCEPT !.missed_ = [otherTx \in TxId |-> IF otherTx \in s2.tx_ THEN state.missed_[otherTx] \cup state.written_[t] ELSE {}]]
+             s4 == [ s3 EXCEPT !.snapshotStore_ = [state.snapshotStore_ EXCEPT ![t] = [k \in Key |-> NoVal]] ]
+             s5 == [ s4 EXCEPT !.written_ = [state.written_ EXCEPT ![t] = {}] ]
          IN { s5 }
     ELSE {}
     
@@ -186,21 +198,39 @@ CloseTxStates(state) ==
     UNION {CloseTxState(state, t) : t \in TxId}
 
 ----------------------------------------------------------------------------
-S == [store |-> store, 
-      tx |-> tx,
-      snapshotStore |-> snapshotStore,
-      written |-> written,
-      missed |-> missed]
-      
+    
 Trace(s) ==
     [
-     store |-> s.store,
-     tx |-> s.tx,
-     snapshotStore |-> s.snapshotStore,
-     \*written |-> s.written,
-     missed |-> s.missed
+     storeT |-> s.store_,
+     txT |-> s.tx_,
+     snapshotStoreT |-> s.snapshotStore_,
+     writtenT |-> s.written_,
+     missedT |-> s.missed_
     ]
+ 
+TraceAuto(state) ==
+    [ x \in fnDomain |-> state[x] ]
     
+TraceLearned(state) ==
+    [ x \in NeedToTrace |-> state[x] ]
+    
+AutoRules ==
+    S # S' => TraceAuto(S) # TraceAuto(S')
+
+LearnedRules ==
+    S # S' => TraceLearned(S) # TraceLearned(S')
+
+WeakTraceRule ==
+    [][vars # vars' => traceVars # traceVars']_<<vars, traceVars>>
+
+UsefulTraceRules == 
+   /\ \A s1, s2 \in OpenTxStates(S) : s1 # s2 => Trace(s1) # Trace(s2)
+   /\ \A s1, s2 \in AddStates(S) : s1 # s2 => Trace(s1) # Trace(s2)
+   /\ \A s1, s2 \in UpdateStates(S) : s1 # s2 => Trace(s1) # Trace(s2)
+   /\ \A s1, s2 \in RemoveStates(S) : s1 # s2 => Trace(s1) # Trace(s2)
+   /\ \A s1, s2 \in RollbackStates(S) : s1 # s2 => Trace(s1) # Trace(s2)
+   /\ \A s1, s2 \in CloseTxStates(S) : s1 # s2 => Trace(s1) # Trace(s2)
+
 TraceRules ==
    /\ OpenTxStates(S) # AddStates(S) =>
         {Trace(s) : s \in OpenTxStates(S)} # {Trace(s) : s \in AddStates(S)}
@@ -232,14 +262,16 @@ TraceRules ==
         {Trace(s) : s \in RemoveStates(S)} # {Trace(s) : s \in CloseTxStates(S)}
    /\ RollbackStates(S) # CloseTxStates(S) =>
         {Trace(s) : s \in RollbackStates(S)} # {Trace(s) : s \in CloseTxStates(S)}
-
+   
 ----------------------------------------------------------------------------
 THEOREM Spec => [](TypeInvariant /\ TxLifecycle)
 
-THEOREM Spec =>  [][vars # vars' => TraceVars(vars) # TraceVars(vars')]_<<vars>>
+THEOREM Spec => WeakTraceRule
 
-THEOREM Spec => TraceRules 
+THEOREM Spec => []TraceRules 
+
+THEOREM Spec => []UsefulTraceRules
 =============================================================================
 \* Modification History
-\* Last modified Sun Jun 09 19:05:14 PDT 2024 by user
+\* Last modified Sat Jun 22 21:51:01 PDT 2024 by user
 \* Created Mon Jun 03 17:44:12 PDT 2024 by user
