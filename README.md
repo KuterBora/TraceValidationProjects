@@ -1,1 +1,1 @@
-Collections of TLA+ specifications that investigated properties of trace validation.
+Collection of TLA+ specifications that investigated properties of trace validation.
